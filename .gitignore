@@ -1,0 +1,13 @@
+.DS_Store
+*.pyc
+__pycache__/
+.venv/
+build/
+dist/
+*.bin
+*.elf
+*.map
+*.uf2
+sdkconfig
+sdkconfig.old
+managed_components/
