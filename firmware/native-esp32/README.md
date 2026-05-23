@@ -29,6 +29,14 @@ Only flash after recovery has been verified or you are prepared to use the origi
 
 If auto-reset does not enter the bootloader, hold BOOT, tap RESET, then release BOOT after flashing starts.
 
+To verify that the physical BOOT/RESET sequence worked before flashing, run this read-only detector from the repo root:
+
+```bash
+./tools/detect-bootloader.sh
+```
+
+It will print `SUCCESS` once the ESP32 ROM bootloader answers.
+
 The generated flash layout is:
 
 - `0x1000`: `build/bootloader/bootloader.bin`
