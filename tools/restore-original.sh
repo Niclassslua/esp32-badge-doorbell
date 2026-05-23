@@ -10,10 +10,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DUMP_DIR="${DUMP_DIR:-$SCRIPT_DIR/../../tr22-badge/flash-dump}"
 PORT="${PORT:-/dev/cu.usbserial-110}"
 BAUD="${BAUD:-921600}"
+ESPTOOL="${ESPTOOL:-/opt/homebrew/bin/esptool.py}"
 
 cd "$DUMP_DIR"
 
-python3 -m esptool --chip esp32 --port "$PORT" --baud "$BAUD" \
+"$ESPTOOL" --chip esp32 --port "$PORT" --baud "$BAUD" \
   --before default-reset --after hard-reset write-flash \
   --flash_mode dio --flash_freq 80m --flash_size 16MB \
   0x1000 bootloader.bin \

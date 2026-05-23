@@ -1,0 +1,46 @@
+# Native ESP32 Firmware
+
+Minimal ESP-IDF bring-up firmware for the TR22 badge.
+
+Current behavior:
+
+- Logs chip and flash information over UART.
+- Toggles GPIO2 once per second as a first LED probe.
+- Attempts a TR19-compatible 2.9-inch ePaper update with `HELLO TR22 CUSTOM FW`.
+
+GPIO2 is only a placeholder until the real TR22 LED pins are confirmed.
+The display pins are copied from TR19: SCK 18, MOSI 23, CS 25, DC 27, RST 0, BUSY 13.
+Display operations have timeouts so the firmware should continue blinking/logging if the panel is not responding.
+
+## Build
+
+```bash
+../../tools/esp-idf-env.sh idf.py set-target esp32
+../../tools/esp-idf-env.sh idf.py build
+```
+
+## Flash
+
+Only flash after recovery has been verified or you are prepared to use the original dump restore path.
+
+```bash
+../../tools/esp-idf-env.sh idf.py -p /dev/cu.usbserial-110 flash monitor
+```
+
+If auto-reset does not enter the bootloader, hold BOOT, tap RESET, then release BOOT after flashing starts.
+
+The generated flash layout is:
+
+- `0x1000`: `build/bootloader/bootloader.bin`
+- `0x8000`: `build/partition_table/partition-table.bin`
+- `0x10000`: `build/tr22_custom.bin`
+
+## Restore
+
+The original dump remains in `../../tr22-badge/flash-dump`. To restore it:
+
+```bash
+CONFIRM_RESTORE=yes ../../tools/restore-original.sh
+```
+
+Use `PORT=/dev/cu.usbserial-...` and `BAUD=460800` if the defaults do not connect reliably.
