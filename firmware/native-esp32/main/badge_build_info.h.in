@@ -1,0 +1,4 @@
+#pragma once
+
+#define BADGE_BUILD_TIMESTAMP "@BADGE_BUILD_TIMESTAMP_UPPER@"
+

@@ -19,6 +19,25 @@ Display operations have timeouts so the firmware should continue blinking/loggin
 ../../tools/esp-idf-env.sh idf.py build
 ```
 
+## Dev OTA
+
+Run the OTA file server once from the repo root:
+
+```bash
+python3 tools/ota-server.py firmware/native-esp32/build/tr22_custom.bin
+```
+
+After the badge is running on WiFi, rebuild and trigger an update without
+power-cycling:
+
+```bash
+tools/badge.py --host <badge-ip-or-hostname> ota --build
+```
+
+The HTTP request only reboots the badge into recovery. Recovery keeps the
+actual install path: it fetches `OTA_FIRMWARE_URL`, validates the app image,
+writes the normal app slot when needed, and then boots it.
+
 ## Flash
 
 Only flash after recovery has been verified or you are prepared to use the original dump restore path.

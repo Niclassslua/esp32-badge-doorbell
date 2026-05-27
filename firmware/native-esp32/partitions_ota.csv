@@ -1,0 +1,12 @@
+# TR22 OTA partition table — 16 MB flash
+#
+# The bootloader lives at 0x1000 (automatic) and the partition table at 0x8000.
+# ota_0 starts at 0x10000 to match the existing bootloader expectation.
+# otadata is required: the bootloader reads it to know which OTA slot to boot.
+#
+# Name,    Type, SubType,  Offset,   Size,   Flags
+nvs,       data, nvs,      0x9000,   0x4000,
+otadata,   data, ota,      0xd000,   0x2000,
+phy_init,  data, phy,      0xf000,   0x1000,
+ota_0,     app,  ota_0,    0x10000,  0x180000,
+ota_1,     app,  ota_1,    0x190000, 0x180000,

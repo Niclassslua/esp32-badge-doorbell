@@ -3,6 +3,7 @@
 __pycache__/
 .venv/
 build/
+build-*/
 dist/
 *.bin
 *.elf
@@ -12,3 +13,5 @@ sdkconfig
 sdkconfig.old
 managed_components/
 .deps/
+.leankg/
+tools/logs/
