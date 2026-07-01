@@ -5,10 +5,13 @@ Local workspace for building our own TROOPERS 22 badge firmware.
 This repo starts from what we know:
 
 - The badge is a classic ESP32 with 16 MB flash.
-- The original dump is restorable from `../tr22-badge/flash-dump/`.
 - Secure boot and flash encryption were not enabled on the tested device.
 - The TR22 display is believed to be the same as the TR19 display.
-- TR19 firmware source is available locally at `../tr19-badge/upstream/tr19-badge-firmware/`.
+- A vendored copy of the relevant TR19 display driver lives in `vendor/tr19-moddisplay/`.
+
+If you have a backup of the original stock firmware, `tools/backup-original.sh`
+and `tools/restore-original.sh` can create/restore it; see
+`docs/recover-original-firmware.md` for details.
 
 ## Layout
 
@@ -16,7 +19,6 @@ This repo starts from what we know:
 - `firmware/`: our firmware experiments and eventual build targets.
 - `vendor/`: copied third-party/upstream code used as a reference or base.
 - `tools/`: local helper scripts.
-- `notes/`: scratch notes from hardware tests and reverse engineering.
 
 ## Current Strategy
 

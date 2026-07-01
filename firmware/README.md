@@ -1,10 +1,7 @@
-# Firmware Experiments
+# Firmware
 
-This directory is for our own firmware targets.
+- `native-esp32/`: the active ESP-IDF firmware target. See `native-esp32/README.md`
+  for build/flash/configure instructions.
 
-Recommended tracks:
-
-- `micropython-tr22/`: adapt the TR19-style MicroPython display module and badge framework concepts.
-- `native-esp32/`: minimal ESP-IDF firmware for hardware bring-up and pin testing.
-
-The vendored TR19 display code currently lives in `../vendor/tr19-moddisplay/`.
+The vendored TR19 display code this firmware is based on lives in
+`../vendor/tr19-moddisplay/`.

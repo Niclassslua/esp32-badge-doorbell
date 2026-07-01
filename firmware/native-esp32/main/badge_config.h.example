@@ -1,0 +1,135 @@
+#pragma once
+
+#include "driver/gpio.h"
+#include "ota_config.h" /* reuse OTA_WIFI_SSID / OTA_WIFI_PASSWORD */
+
+/*
+ * badge_config.h — copy this file to badge_config.h and edit before building.
+ * badge_config.h is gitignored since it holds your Home Assistant token.
+ *
+ * Edit these values before building and flashing:
+ *
+ *   BADGE_HOME_ASSISTANT_*    Optional Home Assistant light flash sequence
+ *                             triggered by a doorbell ring.
+ *
+ *   BADGE_HTTP_SERVER_PORT    TCP port the on-badge HTTP server listens on.
+ *   BADGE_CUSTOM_TEXT_MAX     Maximum length (bytes, including NUL) of the
+ *                             custom text line stored in NVS and shown on the
+ *                             display.
+ */
+
+/* Home Assistant ring feedback ------------------------------------------- */
+/* Leave BADGE_HOME_ASSISTANT_AUTH_TOKEN empty to disable this integration. */
+#define BADGE_HOME_ASSISTANT_LIGHT_TURN_ON_URL  "http://YOUR_HA_HOST:8123/api/services/light/turn_on"
+#define BADGE_HOME_ASSISTANT_LIGHT_TURN_OFF_URL "http://YOUR_HA_HOST:8123/api/services/light/turn_off"
+#define BADGE_HOME_ASSISTANT_AUTH_TOKEN         ""
+#define BADGE_HOME_ASSISTANT_ENTITY_ID          "light.your_entity"
+#define BADGE_HOME_ASSISTANT_BRIGHTNESS_PCT     100
+#define BADGE_HOME_ASSISTANT_FLASH_COUNT        2
+#define BADGE_HOME_ASSISTANT_FLASH_ON_MS        2000
+#define BADGE_HOME_ASSISTANT_FLASH_OFF_MS       2000
+#define BADGE_HOME_ASSISTANT_HTTP_TIMEOUT_MS    5000
+
+/* Spam protection: ignore new ring attempts while one is running and until
+ * this cooldown has elapsed since the accepted ring. */
+#define BADGE_RING_COOLDOWN_MS                  5000
+
+/* Shared I2C bus (IQS550 touch, DRV2605L haptic, PCA9555 status I/O) ------ */
+#define BADGE_I2C_SDA_GPIO      GPIO_NUM_4
+#define BADGE_I2C_SCL_GPIO      GPIO_NUM_5
+
+/* Status button (Please ring / Do not disturb toggle) ---------------------- */
+/* GPIO_NUM_NC disables it; the same toggle is reachable via POST /status. */
+#define BADGE_BTN_STATUS_GPIO   GPIO_NUM_NC
+
+/* TR19-style WS2812 / NeoPixel LEDs --------------------------------------- */
+#define BADGE_LED_GPIO          GPIO_NUM_22
+#define BADGE_LED_COUNT         6
+#define BADGE_LED_BRIGHTNESS    24
+/* Keep the "Please ring" state dark to avoid a constant green battery drain.
+ * Button/touch feedback still flashes white via BADGE_LED_FEEDBACK_BRIGHTNESS.
+ */
+#define BADGE_LED_PLEASE_RING_STEADY_BRIGHTNESS 0
+/* Dim DnD red from BADGE_LED_BRIGHTNESS (24) → 8 to save ~7 mA continuous
+ * while the badge is in DnD state. Still visible across a room. */
+#define BADGE_LED_DO_NOT_DISTURB_STEADY_BRIGHTNESS 8
+#define BADGE_LED_FEEDBACK_BRIGHTNESS         96
+#define BADGE_LED_FEEDBACK_MS                 120
+
+/* Battery ADC -------------------------------------------------------------- */
+#define BADGE_BATTERY_ADC_GPIO       GPIO_NUM_35
+#define BADGE_BATTERY_ADC_FALLBACK_GPIO GPIO_NUM_39
+#define BADGE_BATTERY_EMPTY_MV       3300
+#define BADGE_BATTERY_FULL_MV        4200
+#define BADGE_BATTERY_VALID_MIN_MV   2500
+#define BADGE_BATTERY_VALID_MAX_MV   4600
+#define BADGE_BATTERY_ADC_SCALE_NUM  2
+#define BADGE_BATTERY_ADC_SCALE_DEN  1
+
+/* Battery I2C probes ------------------------------------------------------ */
+#define BADGE_BATTERY_I2C_PRIMARY_SDA_GPIO  GPIO_NUM_4
+#define BADGE_BATTERY_I2C_PRIMARY_SCL_GPIO  GPIO_NUM_5
+#define BADGE_BATTERY_I2C_FALLBACK_SDA_GPIO GPIO_NUM_21
+#define BADGE_BATTERY_I2C_FALLBACK_SCL_GPIO GPIO_NUM_NC
+#define BADGE_BATTERY_I2C_FREQ_HZ           100000
+#define BADGE_BATTERY_I2C_SCAN_ON_BOOT      0
+#define BADGE_BATTERY_DRV2605_ADDR          0x5a
+#define BADGE_BATTERY_DRV2605_VBAT_REG      0x21
+#define BADGE_BATTERY_DRV2605_MODE_REG      0x01
+#define BADGE_BATTERY_DRV2605_RTP_INPUT_REG 0x02
+#define BADGE_BATTERY_DRV2605_GO_REG        0x0c
+#define BADGE_BATTERY_DRV2605_CONTROL3_REG  0x1d
+#define BADGE_BATTERY_DRV2605_MODE_STANDBY  0x40
+#define BADGE_BATTERY_DRV2605_MODE_RTP      0x05
+#define BADGE_BATTERY_DRV2605_GO_BIT        0x01
+#define BADGE_BATTERY_DRV2605_TRIGGER_MS    12
+#define BADGE_BATTERY_DRV2605_GO_TIMEOUT_MS 25
+#define BADGE_BATTERY_SAMD_ADDR             0x30
+
+/* Unknown devices spotted on the primary I2C scan, fingerprinted at boot.
+ * (0x74 was previously listed here; it is the IQS550 touch controller —
+ * see BADGE_TOUCH_IQS550_ADDR below.) */
+#define BADGE_BATTERY_UNKNOWN_ADDR_A        0x20
+
+/* Azoteq IQS550 capacitive touch controller (the QWERTY keyboard overlay).
+ * Lives on the shared I2C bus at 0x74. Polled blindly (no RDY GPIO known).
+ */
+#define BADGE_TOUCH_IQS550_ADDR             0x74
+#define BADGE_TOUCH_I2C_FREQ_HZ             400000
+/* 250 ms = 4 Hz. Adds at most ~quarter-second latency on first finger contact
+ * but reduces I2C wake events 5× vs the previous 50 ms cadence. */
+#define BADGE_TOUCH_POLL_MS                 250
+#define BADGE_TOUCH_DEBOUNCE_MS             300
+
+/* Cache window so per-redraw calls don't keep re-triggering the DRV2605. */
+#define BADGE_BATTERY_CACHE_TTL_MS          5000
+
+/* HTTP server -------------------------------------------------------------- */
+#define BADGE_HTTP_SERVER_PORT  80
+
+/* Feature gates ------------------------------------------------------------ */
+/* The HTTP doorbell server and the log-shipping task are intentionally off
+ * by default so WiFi can stay down ~24/7. Flip to 1 to re-enable; nothing
+ * else changes (the code paths remain compiled). */
+#define BADGE_ENABLE_HTTP_SERVER 0
+#define BADGE_ENABLE_LOG_SHIP    0
+
+/* Nav button expander (PCA9555) - START hold triggers OTA ------------------ */
+/* TR22-observed expander on the shared I2C bus is at 0x20; TR19 used 0x77.
+ * badge_nav probes both and binds to whichever ACKs. */
+#define BADGE_NAV_I2C_ADDR_PRIMARY   0x20
+#define BADGE_NAV_I2C_ADDR_FALLBACK  0x77
+#define BADGE_NAV_POLL_MS            200
+#define BADGE_NAV_OTA_HOLD_MS        3000
+/* START sits on P0_7 (active-low) per docs/hardware-assumptions.md. */
+#define BADGE_NAV_START_MASK         0x80
+
+/* Display / state ---------------------------------------------------------- */
+#define BADGE_CUSTOM_TEXT_MAX   128
+
+/* Periodic display refresh so battery % and IP don't sit frozen on the
+ * e-paper between state changes. 45 min is a balance: long enough that the
+ * refresh itself contributes negligible current (one ~700 ms SPI burst per
+ * 45 min ≈ 0.026 % duty), short enough that a draining battery is reflected
+ * within an hour. Set to 0 to disable the timer task entirely. */
+#define BADGE_DISPLAY_REFRESH_MS  (45u * 60u * 1000u)

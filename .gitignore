@@ -15,3 +15,8 @@ managed_components/
 .deps/
 .leankg/
 tools/logs/
+
+# Secrets: WiFi credentials, Home Assistant token, network layout.
+# Copy the .example file and fill in your own values.
+firmware/native-esp32/main/ota_config.h
+firmware/native-esp32/main/badge_config.h

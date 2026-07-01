@@ -1,0 +1,47 @@
+#pragma once
+
+/*
+ * OTA configuration — copy this file to ota_config.h and edit before building.
+ * ota_config.h is gitignored since it holds your WiFi credentials.
+ *
+ * OTA_WIFI_SSID        Your access point name (case-sensitive).
+ * OTA_WIFI_PASSWORD    Your WPA2 passphrase. Use "" for open networks.
+ * OTA_FIRMWARE_URL     HTTP URL where the dev server serves the .bin.
+ *                      Example: "http://192.168.1.100:8070/tr22_custom.bin"
+ *                      Find your machine's LAN IP:
+ *                        macOS/Linux:  ip addr   or   ifconfig
+ *                        Windows:      ipconfig
+ *
+ * OTA_WIFI_RETRY_MAX   Reconnect attempts before giving up on WiFi.
+ * OTA_WIFI_TIMEOUT_MS  Total ms to wait for an IP address.
+ * OTA_HTTP_BUF_SIZE    Read buffer for streaming firmware into flash.
+ */
+
+#define OTA_WIFI_SSID       "YOUR_WIFI_SSID"
+#define OTA_WIFI_PASSWORD   "YOUR_WIFI_PASSWORD"
+#define OTA_FIRMWARE_URL    "http://192.168.1.100:8070/tr22_custom.bin"
+
+#define OTA_WIFI_RETRY_MAX  5
+#define OTA_WIFI_TIMEOUT_MS 15000
+
+/*
+ * Static IP — skips the ~1.5 s DHCP round-trip so the doorbell lamp reacts
+ * faster. Set OTA_WIFI_USE_STATIC_IP to 0 to fall back to DHCP if the badge
+ * moves to a different network. DNS points at the gateway so the night-mode
+ * SNTP pool.ntp.org fallback still resolves.
+ * Add a DHCP reservation on the router for this address to avoid conflicts.
+ */
+#define OTA_WIFI_USE_STATIC_IP 0
+#define OTA_WIFI_STATIC_IP     "192.168.1.200"
+#define OTA_WIFI_GATEWAY       "192.168.1.1"
+#define OTA_WIFI_NETMASK       "255.255.255.0"
+#define OTA_WIFI_DNS           "192.168.1.1"
+#define OTA_CHECK_HTTP_TIMEOUT_MS 3000
+#define OTA_HTTP_BUF_SIZE   4096
+
+/*
+ * LOG_SERVER_URL  HTTP endpoint that accepts POST /logs from the badge.
+ *                 Must match the IP/port where tools/log-server.py is running.
+ *                 Example: "http://192.168.1.100:8071/logs"
+ */
+#define LOG_SERVER_URL      "http://192.168.1.100:8071/logs"

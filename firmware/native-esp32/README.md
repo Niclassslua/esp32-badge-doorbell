@@ -12,6 +12,17 @@ GPIO2 is only a placeholder until the real TR22 LED pins are confirmed.
 The display pins are copied from TR19: SCK 18, MOSI 23, CS 25, DC 27, RST 0, BUSY 13.
 Display operations have timeouts so the firmware should continue blinking/logging if the panel is not responding.
 
+## Configure
+
+Copy the two example config files and fill in your own values (WiFi
+credentials, OTA server URL, optional Home Assistant token). Both real files
+are gitignored so your secrets never get committed.
+
+```bash
+cp main/ota_config.h.example main/ota_config.h
+cp main/badge_config.h.example main/badge_config.h
+```
+
 ## Build
 
 ```bash
@@ -62,9 +73,31 @@ The generated flash layout is:
 - `0x8000`: `build/partition_table/partition-table.bin`
 - `0x10000`: `build/tr22_custom.bin`
 
+## Serial Log
+
+For a scrollable macOS serial monitor equivalent to
+`screen /dev/cu.usbserial-110 115200`, run:
+
+```bash
+./tools/serial-log.py
+```
+
+The tool waits until `/dev/cu.usbserial-110` appears, leaves output in your
+normal terminal scrollback, and keeps all received bytes available for copy.
+Press `Ctrl-Y` to copy all captured serial output to the macOS clipboard.
+Press `Ctrl-]` to disconnect.
+
+Use a different port or baud rate when needed:
+
+```bash
+./tools/serial-log.py /dev/cu.usbserial-210 --baud 460800
+```
+
 ## Restore
 
-The original dump remains in `../../tr22-badge/flash-dump`. To restore it:
+If you have a backup of the original stock firmware (see
+`tools/backup-original.sh` to create one, or `docs/recover-original-firmware.md`
+for background), restore it with:
 
 ```bash
 CONFIRM_RESTORE=yes ../../tools/restore-original.sh
