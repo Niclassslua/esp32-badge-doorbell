@@ -1,5 +1,7 @@
 # ESP32 Badge Doorbell
 
+<img width="480" height="569" alt="IMG_8547-compressed-256colors" src="https://github.com/user-attachments/assets/f9e717c3-9dec-4bbd-b7b9-c2d50e91c3f7" />
+
 Custom ESP-IDF firmware that turns a TROOPERS22 conference badge into a
 battery-powered smart doorbell / door-sign. Touch the badge to ring, flip
 between "please ring" and "do not disturb", flash a Home Assistant light on
