@@ -16,6 +16,7 @@
 typedef enum {
     SIGN_PLEASE_RING    = 0,
     SIGN_DO_NOT_DISTURB = 1,
+    SIGN_NIGHT_MODE     = 2,   /* doorbell disabled overnight; device about to deep-sleep */
 } sign_state_t;
 
 #define BADGE_LABEL_PLEASE_RING    "Bitte klingeln"
@@ -64,3 +65,13 @@ void badge_state_set_led_color(bool enabled, badge_led_color_t color);
  * Use this when non-persistent display metadata, such as WiFi IP, changes.
  */
 void badge_state_refresh_display(void);
+
+/**
+ * Switch to SIGN_NIGHT_MODE, kill LEDs, and render "KLINGEL DEAKTIVIERT"
+ * on the e-paper synchronously. Returns only after the display refresh is
+ * complete so the caller can immediately call esp_deep_sleep_start().
+ *
+ * Unlike badge_state_set_state() this does NOT notify the async display task
+ * to avoid a race between the two SPI writers.
+ */
+esp_err_t badge_state_enter_nightmode(void);

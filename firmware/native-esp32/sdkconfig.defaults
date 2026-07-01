@@ -6,11 +6,13 @@ CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 # WiFi + OTA + log-ship init allocates ~8 KB of stack frames
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=10240
 
-# Enable DEBUG-level log output so log_ship captures maximum detail.
-# Internal ESP-IDF driver noise is suppressed to WARN at runtime in log_ship_init().
-CONFIG_LOG_DEFAULT_LEVEL_DEBUG=y
-CONFIG_LOG_DEFAULT_LEVEL=4
-CONFIG_LOG_MAXIMUM_LEVEL=4
+# INFO is the default verbosity now that log_ship is gated off.  Lower level
+# means smaller binary (DEBUG strings are stripped) and less CPU on the UART
+# formatting path.  Re-raise to DEBUG (LEVEL=4) if you flip BADGE_ENABLE_LOG_SHIP
+# back on.
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL=3
+CONFIG_LOG_MAXIMUM_LEVEL=3
 
 # Use the OTA-capable custom partition table
 CONFIG_PARTITION_TABLE_CUSTOM=y
@@ -20,6 +22,14 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_ota.csv"
 # themselves valid.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
-# Power saving: dynamic frequency scaling lets idle/event-driven firmware
-# drop CPU/APB clocks between WiFi, HTTP, touch, and display work.
+# Power saving: dynamic frequency scaling + automatic light sleep lets idle
+# event-driven firmware drop CPU/APB clocks and halt the CPU between WiFi,
+# touch, and display work. Tickless idle is REQUIRED for light sleep to fire
+# (otherwise the systick keeps waking the CPU 100x/sec).
 CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+CONFIG_FREERTOS_IDLE_TIME_BEFORE_SLEEP=3
+
+# Bluetooth is unused; keep it explicitly off so a future Kconfig edit can't
+# accidentally pull in BT init (~30 mA cost).
+CONFIG_BT_ENABLED=n

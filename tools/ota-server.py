@@ -58,6 +58,66 @@ def _extract_app_desc(data: bytes):
     app_date = data[base+96:base+112].rstrip(b'\x00').decode('ascii', errors='replace').strip()
     return app_date, app_time
 
+def _format_app_build(app_date, app_time):
+    """Return a printable firmware build date/time."""
+    if app_date and app_time:
+        return f"{app_date} {app_time}"
+    if app_date:
+        return app_date
+    if app_time:
+        return app_time
+    return "unknown"
+
+def _read_firmware_status():
+    """Read enough firmware metadata for terminal status updates."""
+    with open(BIN_PATH, "rb") as f:
+        data = f.read(_APP_DESC_OFFSET + 112)
+    stat = os.stat(BIN_PATH)
+    app_date, app_time = _extract_app_desc(data)
+    return {
+        "app_build": _format_app_build(app_date, app_time),
+        "mtime": stat.st_mtime,
+        "size": stat.st_size,
+        "stat_key": (stat.st_mtime_ns, stat.st_size),
+    }
+
+class FirmwareStatus:
+    """Tracks and prints the firmware build date served by this process."""
+
+    def __init__(self):
+        self._last_stat_key = None
+        self._last_app_build = None
+        self._available = True
+
+    def refresh(self, reason):
+        try:
+            status = _read_firmware_status()
+        except OSError as e:
+            if self._available:
+                print(f"  serving firmware build: unavailable ({e})", flush=True)
+            self._available = False
+            return
+
+        self._available = True
+        if status["stat_key"] == self._last_stat_key:
+            return
+
+        self._last_stat_key = status["stat_key"]
+        app_build = status["app_build"]
+        if reason != "startup" and app_build == self._last_app_build:
+            return
+
+        self._last_app_build = app_build
+        disk_mtime = time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(status["mtime"]))
+        prefix = "  serving firmware build"
+        if reason != "startup":
+            prefix += " changed"
+        print(
+            f"{prefix}: {app_build} "
+            f"({status['size']} bytes, file-mtime={disk_mtime})",
+            flush=True,
+        )
+
 if len(sys.argv) < 2:
     print(__doc__)
     print("usage: ota-server.py <path-to-firmware.bin>")
@@ -69,6 +129,14 @@ if not os.path.isfile(BIN_PATH):
     sys.exit(1)
 
 BIN_NAME = os.path.basename(BIN_PATH)
+FIRMWARE_STATUS = FirmwareStatus()
+
+
+class FirmwareHTTPServer(http.server.HTTPServer):
+    """HTTP server that refreshes terminal firmware status while serving."""
+
+    def service_actions(self):
+        FIRMWARE_STATUS.refresh("poll")
 
 
 class FirmwareHandler(http.server.BaseHTTPRequestHandler):
@@ -143,7 +211,7 @@ class FirmwareHandler(http.server.BaseHTTPRequestHandler):
         print(f"  response #{request_id}: HTTP {status}", flush=True)
         if data is not None:
             app_date, app_time = _extract_app_desc(data)
-            app_build = f"{app_date} {app_time}" if app_date and app_time else "unknown"
+            app_build = _format_app_build(app_date, app_time)
             size_kb = len(data) / 1024.0
             if mtime is not None:
                 disk_mtime = time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(mtime))
@@ -197,7 +265,7 @@ class FirmwareHandler(http.server.BaseHTTPRequestHandler):
             return
 
         app_date, app_time = _extract_app_desc(data)
-        ver_str = f"{app_date} {app_time}" if app_date and app_time else "unknown version"
+        ver_str = _format_app_build(app_date, app_time)
 
         self.send_response(200)
         headers = self._send_firmware_headers(data)
@@ -221,8 +289,9 @@ class FirmwareHandler(http.server.BaseHTTPRequestHandler):
 
 print(f"  file : {BIN_PATH}")
 print(f"  URL  : http://0.0.0.0:{PORT}/{BIN_NAME}")
+FIRMWARE_STATUS.refresh("startup")
 print("  Reads file fresh on every request — just rebuild and power-cycle the badge.")
 print("  Ctrl-C to stop\n")
 
-with http.server.HTTPServer(("", PORT), FirmwareHandler) as httpd:
+with FirmwareHTTPServer(("", PORT), FirmwareHandler) as httpd:
     httpd.serve_forever()

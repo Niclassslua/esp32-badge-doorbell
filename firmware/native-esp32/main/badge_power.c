@@ -273,22 +273,42 @@ static int read_drv2605_battery_percent(void)
         return -1;
     }
 
+    /*
+     * Per TI's reference impl, the first VBAT sample after a long sleep can
+     * come back saturated at 0xFF before the supply monitor has settled.
+     * Retry up to 3 times — each trigger is ~12 ms, so total worst case ~40 ms,
+     * called at most once per BADGE_BATTERY_CACHE_TTL_MS or per periodic
+     * display refresh.
+     */
     xSemaphoreTake(s_drv_mutex, portMAX_DELAY);
     uint8_t raw = 0;
-    esp_err_t err = drv2605_trigger_and_read_vbat(&raw);
+    int battery_mv = 0;
+    bool plausible = false;
+    esp_err_t err = ESP_FAIL;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        err = drv2605_trigger_and_read_vbat(&raw);
+        if (err != ESP_OK) {
+            break;
+        }
+        battery_mv = battery_mv_from_drv2605_raw(raw);
+        plausible = battery_mv_plausible(battery_mv) && raw != 0xff;
+        if (plausible) {
+            break;
+        }
+        ESP_LOGD(TAG, "DRV2605 VBAT attempt %d: raw=0x%02x mv=%d (retry)",
+                 attempt + 1, raw, battery_mv);
+    }
     xSemaphoreGive(s_drv_mutex);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "DRV2605 read failed: %s", esp_err_to_name(err));
         return -1;
     }
 
-    int battery_mv = battery_mv_from_drv2605_raw(raw);
-    bool plausible = battery_mv_plausible(battery_mv) && raw != 0xff;
     int percent = battery_percent_from_mv(battery_mv);
 
     ESP_LOGI(TAG, "battery DRV2605 raw=%u mv=%d percent=%d%s",
              raw, battery_mv, percent,
-             plausible ? "" : " ignored; saturated or out of range after trigger");
+             plausible ? "" : " ignored; saturated or out of range after retry");
 
     return plausible ? percent : -1;
 }

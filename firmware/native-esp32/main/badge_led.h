@@ -36,3 +36,9 @@ void badge_led_set_custom_color(bool enabled, badge_led_color_t color);
  * Briefly raise LED brightness, then restore the door-sign state color.
  */
 void badge_led_pulse_button_feedback(bool please_ring);
+
+/**
+ * Force all LEDs off regardless of custom color or sign state.
+ * Used during night mode to eliminate LED current drain entirely.
+ */
+void badge_led_off(void);

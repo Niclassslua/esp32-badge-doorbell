@@ -14,11 +14,15 @@
 #include "badge_config.h"
 #include "badge_i2c.h"
 #include "badge_led.h"
+#include "badge_nav.h"
+#include "badge_nightmode.h"
 #include "badge_power.h"
 #include "badge_server.h"
 #include "badge_state.h"
+/* badge_state.h provides badge_state_get_state(); already pulled in above. */
 #include "gpio_debug.h"
 #include "log_ship.h"
+#include "ota_config.h"
 #include "ota_update.h"
 #include "recovery_boot.h"
 #include "tr19_epaper.h"
@@ -39,40 +43,22 @@ static const char *TAG = "tr22";
 static void configure_power_saving(void)
 {
 #if CONFIG_PM_ENABLE
-    const int min_freq_mhz = 40;
+    const int min_freq_mhz = 10;
     esp_pm_config_t pm_config = {
         .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
         .min_freq_mhz = min_freq_mhz,
-        .light_sleep_enable = false,
+        .light_sleep_enable = true,
     };
     esp_err_t err = esp_pm_configure(&pm_config);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "power management: DFS %d-%d MHz, light sleep disabled",
+        ESP_LOGI(TAG, "power management: DFS %d-%d MHz, light sleep enabled",
                  min_freq_mhz, CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
     } else {
         ESP_LOGW(TAG, "power management setup failed: %s", esp_err_to_name(err));
     }
+#else
+    ESP_LOGW(TAG, "power management disabled in sdkconfig; idle current will be high");
 #endif
-}
-
-static bool run_ota_before_app_start(void)
-{
-    bool wifi_ok = (wifi_connect_sta() == ESP_OK);
-    if (!wifi_ok) {
-        return false;
-    }
-
-    /*
-     * In the current two-slot recovery layout, ota_0 is reserved for recovery
-     * and ota_1 is the app. The app must not use round-robin OTA because that
-     * would eventually overwrite recovery. If the server has a new image, boot
-     * recovery and let recovery write ota_1 while it is not running.
-     */
-    esp_err_t err = ota_update_reboot_to_recovery_if_server_newer(recovery_partition());
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "safe OTA handoff failed: %s", esp_err_to_name(err));
-    }
-    return true;
 }
 
 static void log_chip_info(void)
@@ -91,6 +77,80 @@ static void log_chip_info(void)
     ESP_LOGI(TAG, "Flash: %" PRIu32 " bytes", flash_size);
 }
 
+/*
+ * OTA worker task — runs the actual WiFi + OTA flow.
+ *
+ * Spawned with 8 KB stack from the nav callback (the nav task itself only
+ * has 3 KB, not enough headroom for esp_wifi_init + esp_http_client +
+ * esp_image_verify). Same pattern as task_ring in badge_button.c.
+ *
+ * Notes:
+ * - ota_update_reboot_to_recovery_if_server_newer() returns ESP_OK *both*
+ *   for "no update needed" and "update applied & rebooted" (the reboot path
+ *   never returns). Loud INFO logs make it obvious on the UART which branch
+ *   ran without diving into the source.
+ */
+static void ota_worker_task(void *arg)
+{
+    (void)arg;
+    ESP_LOGI(TAG, "=== OTA worker started ===");
+
+    if (wifi_ensure_up(15000) != ESP_OK) {
+        ESP_LOGW(TAG, "OTA aborted: WiFi did not connect within 15s "
+                      "(check OTA_WIFI_SSID/OTA_WIFI_PASSWORD in ota_config.h "
+                      "and that the AP is reachable)");
+        goto cleanup;
+    }
+
+    ESP_LOGI(TAG, "OTA: WiFi up, querying server at %s", OTA_FIRMWARE_URL);
+    const esp_partition_t *recovery = recovery_partition();
+    if (recovery == NULL) {
+        ESP_LOGE(TAG, "OTA aborted: no recovery partition (ota_0) found — "
+                      "is the partition table correct? did you flash recovery firmware?");
+        wifi_release();
+        goto cleanup;
+    }
+
+    esp_err_t err = ota_update_reboot_to_recovery_if_server_newer(recovery);
+    if (err == ESP_OK) {
+        /* If a newer build was found the helper rebooted into recovery and
+         * we never reach this line. Reaching here means the server's app
+         * desc matches what we're running. */
+        ESP_LOGI(TAG, "OTA: server build matches running app — nothing to do "
+                      "(rebuild + restart ota-server.py to push a new image)");
+    } else {
+        ESP_LOGW(TAG, "OTA handoff failed: %s "
+                      "(is tools/ota-server.py running on the host in OTA_FIRMWARE_URL?)",
+                 esp_err_to_name(err));
+    }
+    wifi_release();
+
+cleanup:
+    /* Re-sync the LED chain with the persisted sign state — the red
+     * acknowledgement flash earlier silently set the LED state to DnD. */
+    badge_led_set_sign_state(badge_state_get_state() == SIGN_PLEASE_RING);
+    ESP_LOGI(TAG, "=== OTA worker finished ===");
+    vTaskDelete(NULL);
+}
+
+/*
+ * START-hold-3s callback (runs on the nav polling task, 3 KB stack — must
+ * stay light). Acknowledge with an LED flash, then hand off the heavy WiFi
+ * + OTA work to a dedicated 8 KB task and return immediately.
+ */
+static void on_start_hold_ota(void)
+{
+    ESP_LOGI(TAG, "=== START hold detected — spawning OTA worker ===");
+    badge_led_pulse_button_feedback(false);
+
+    BaseType_t ok = xTaskCreate(ota_worker_task, "ota_worker",
+                                8192, NULL, 5, NULL);
+    if (ok != pdPASS) {
+        ESP_LOGE(TAG, "OTA worker task creation failed (out of memory?)");
+        badge_led_set_sign_state(badge_state_get_state() == SIGN_PLEASE_RING);
+    }
+}
+
 void app_main(void)
 {
     if (recovery_boot_button_held()) {
@@ -102,18 +162,20 @@ void app_main(void)
         ESP_LOGE(TAG, "recovery request ignored: %s", esp_err_to_name(err));
     }
 
+#if BADGE_ENABLE_LOG_SHIP
     /*
-     * Install the log-ship vprintf hook before the OTA gate so its decisions
+     * Install the log-ship vprintf hook before anything else so its decisions
      * are captured into the ring buffer and shipped once WiFi is up.
      */
     log_ship_init();
+#endif
+
     configure_power_saving();
 
     /*
      * Reaching app_main means the bootloader handed us control. Mark the
-     * running image valid now so the OTA gate can call
-     * esp_ota_set_boot_partition(recovery) — that call returns
-     * ESP_ERR_OTA_ROLLBACK_INVALID_STATE while we sit in PENDING_VERIFY.
+     * running image valid now so a later OTA handoff can call
+     * esp_ota_set_boot_partition(recovery) without ESP_ERR_OTA_ROLLBACK_INVALID_STATE.
      * The trade-off is no auto-rollback for crashes between here and the
      * end of init; recovery (SD or WiFi OTA) remains the fallback for bad apps.
      */
@@ -122,26 +184,16 @@ void app_main(void)
         ESP_LOGW(TAG, "mark app valid failed: %s", esp_err_to_name(valid_err));
     }
 
-    bool wifi_ok = run_ota_before_app_start();
-
-    if (wifi_ok) {
-        log_ship_wifi_ready();
-    }
-
     log_chip_info();
 
 #if GPIO_DEBUG_MODE
-    if (!wifi_ok) {
-        ESP_LOGW(TAG, "GPIO debug running without WiFi/log shipping");
-    }
-
     gpio_debug_scan();   /* print pull-up/pull-down probe table */
     gpio_debug_watch();  /* block forever, logging every edge   */
     /* unreachable */
 #endif
 
     /* ------------------------------------------------------------------ */
-    /* 1. LEDs/state/display — only starts after the OTA gate has completed. */
+    /* 1. Shared I2C + LEDs + persistent state                            */
     /* ------------------------------------------------------------------ */
     esp_err_t i2c_err = badge_i2c_init();
     if (i2c_err != ESP_OK) {
@@ -155,41 +207,60 @@ void app_main(void)
     ESP_ERROR_CHECK(badge_state_init());
 
     /* ------------------------------------------------------------------ */
-    /* 2. Network services — WiFi is already connected if wifi_ok is true.  */
+    /* 2. Draw the initial display state. WiFi stays off — see plan.       */
     /* ------------------------------------------------------------------ */
-    if (wifi_ok) {
-        badge_state_refresh_display();
+    badge_state_refresh_display();
 
-        /* ---------------------------------------------------------------- */
-        /* 3. HTTP server                                                    */
-        /* ---------------------------------------------------------------- */
+    /* ------------------------------------------------------------------ */
+    /* 2b. Night-mode watchdog (23:00–08:00 Berlin deep sleep).            */
+    /*     Syncs time via SNTP; may enter deep sleep and never return if   */
+    /*     the device booted inside the night window.                       */
+    /* ------------------------------------------------------------------ */
+    esp_err_t nm_err = badge_nightmode_init();
+    if (nm_err != ESP_OK) {
+        ESP_LOGW(TAG, "nightmode init failed: %s", esp_err_to_name(nm_err));
+    }
+
+#if BADGE_ENABLE_HTTP_SERVER
+    /*
+     * The HTTP doorbell server is disabled by default to allow WiFi to stay
+     * off in idle. Flip BADGE_ENABLE_HTTP_SERVER (and remember to keep WiFi
+     * up at boot) to revive it.
+     */
+    if (wifi_ensure_up(OTA_WIFI_TIMEOUT_MS) == ESP_OK) {
         esp_err_t srv_err = badge_server_start();
         if (srv_err != ESP_OK) {
             ESP_LOGE(TAG, "HTTP server failed: %s", esp_err_to_name(srv_err));
-            /* Non-fatal — device still works locally via buttons. */
         }
-    } else {
-        ESP_LOGW(TAG, "WiFi unavailable — running offline "
-                      "(no HTTP server, doorbell POST disabled)");
     }
+#endif
 
     /* ------------------------------------------------------------------ */
-    /* 4. Buttons                                                           */
+    /* 3. Buttons (doorbell touch + status GPIO)                          */
     /* ------------------------------------------------------------------ */
     esp_err_t btn_err = badge_button_init();
     if (btn_err != ESP_OK) {
         ESP_LOGE(TAG, "button init: %s (check GPIO pins in badge_config.h)",
                  esp_err_to_name(btn_err));
-        /* Non-fatal — device still works via HTTP. */
+        /* Non-fatal — device still works via touch + nav hold. */
     }
 
     /* ------------------------------------------------------------------ */
-    /* 5. Idle — all work is event-driven:                                 */
-    /*    • display task  wakes on xTaskNotifyGive from state setters      */
-    /*    • HTTP handlers call badge_state_set_* and return immediately     */
-    /*    • button tasks  call badge_state_set_* on press                  */
+    /* 4. Nav buttons (PCA9555). START-hold-3s triggers OTA.              */
     /* ------------------------------------------------------------------ */
-    ESP_LOGI(TAG, "boot complete — door sign active");
+    esp_err_t nav_err = badge_nav_init(on_start_hold_ota);
+    if (nav_err != ESP_OK) {
+        ESP_LOGW(TAG, "nav init failed: %s (OTA via START hold disabled)",
+                 esp_err_to_name(nav_err));
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* 5. Idle — all work is event-driven:                                */
+    /*    • display task  wakes on xTaskNotifyGive from state setters      */
+    /*    • doorbell ring is triggered by touch / status button            */
+    /*    • OTA flow      starts when START is held for 3 s               */
+    /* ------------------------------------------------------------------ */
+    ESP_LOGI(TAG, "boot complete — door sign active (WiFi on-demand)");
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(5000));
     }

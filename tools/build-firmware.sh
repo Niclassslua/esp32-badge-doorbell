@@ -20,7 +20,7 @@ Environment:
                  GPIO_DEBUG_MODE=1 ALLOW_DANGEROUS_DEBUG=1 only for deliberate
                  GPIO bring-up builds that may block OTA/recovery.
   BUILD_DIR      Build output directory (default: $FIRMWARE_DIR/build)
-  SDKCONFIG      SDK config path (default: $BUILD_DIR/sdkconfig)
+  SDKCONFIG      SDK config path (default: $FIRMWARE_DIR/sdkconfig)
 
 Examples:
   ./build-firmware.sh
@@ -31,7 +31,7 @@ fi
 
 BUILD_TIMESTAMP="${BADGE_BUILD_TIMESTAMP:-$(date '+%b %d %Y %H:%M:%S %Z')}"
 BUILD_DIR="${BUILD_DIR:-$FIRMWARE_DIR/build}"
-SDKCONFIG="${SDKCONFIG:-$BUILD_DIR/sdkconfig}"
+SDKCONFIG="${SDKCONFIG:-$FIRMWARE_DIR/sdkconfig}"
 
 # ESP-IDF embeds __TIME__/__DATE__ into esp_app_desc.c. Ninja only recompiles
 # that file when its source mtime changes, so incremental rebuilds keep the

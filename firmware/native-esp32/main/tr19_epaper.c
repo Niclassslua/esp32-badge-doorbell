@@ -18,7 +18,8 @@
 
 static const char *TAG = "tr22.epaper";
 
-static bool s_epaper_initialized = false;
+static bool s_epaper_bus_ready = false;   /* SPI bus + GPIOs configured once */
+static bool s_panel_armed = false;         /* panel reset + init sequence done */
 static bool s_epaper_partial_lut = false;
 static bool s_recovery_layout_valid = false;
 static char s_recovery_line1[32];
@@ -57,6 +58,7 @@ enum {
 #define SET_RAM_Y_ADDRESS_START_END_POSITION  0x45
 #define SET_RAM_X_ADDRESS_COUNTER             0x4E
 #define SET_RAM_Y_ADDRESS_COUNTER             0x4F
+#define DEEP_SLEEP_MODE                       0x10
 #define TERMINATE_FRAME_READ_WRITE            0xFF
 
 static spi_device_handle_t epd_spi;
@@ -248,6 +250,21 @@ static esp_err_t epd_use_partial_lut(bool partial)
     return ESP_OK;
 }
 
+/*
+ * Tell the SSD1675-class controller to enter Deep Sleep Mode 1: the analog
+ * front-end and gate driver are powered down, and the chip ignores all
+ * commands until a hardware reset wakes it. Standby draw drops from a few
+ * mA to ~µA. Pair with epd_arm_panel() before the next refresh.
+ */
+static esp_err_t epd_deep_sleep(void)
+{
+    ESP_RETURN_ON_ERROR(epd_command(DEEP_SLEEP_MODE), TAG, "deep sleep cmd");
+    ESP_RETURN_ON_ERROR(epd_data(0x01), TAG, "deep sleep mode 1");
+    s_panel_armed = false;
+    s_epaper_partial_lut = false; /* LUT state lost across sleep */
+    return ESP_OK;
+}
+
 static esp_err_t epd_init_panel(void)
 {
     ESP_RETURN_ON_ERROR(epd_reset(), TAG, "reset display");
@@ -362,25 +379,47 @@ static esp_err_t epd_update_logical_rect(int x, int y, int w, int h)
     int bytes_per_row = byte_end - byte_start + 1;
 
     /*
-     * DISPLAY_UPDATE_CONTROL_1 byte 2 = 0x80 enables RED-RAM-bypass mode.
-     * In this mode the controller applies the partial LUT directly to the
-     * BLACK RAM (0x24) without performing a full-panel waveform cycle.
-     * Without this register the controller falls back to full-panel drive
-     * regardless of which LUT is loaded — which is what caused the whole-
-     * screen flash that persisted even after loading lut_partial.
-     * GxEPD2 and Waveshare's own SDK both set this register before every
-     * partial refresh and clear it (0x00, 0x00) before full refreshes.
+     * Partial refresh flow, taken from the TR19 reference driver
+     * (vendor/tr19-moddisplay/moddisplay_epd2in9.c, set_frame_memory_partial
+     * + flush), which itself mirrors the Waveshare 2.9" V1 demo for this
+     * SSD1675-class controller:
+     *
+     *   1. Make sure lut_partial is the active waveform.
+     *   2. Restrict the RAM window to the rectangle.
+     *   3. Write the new pixels into BLACK RAM (0x24) for that window only.
+     *   4. Activate with the standard DUC2=0xC4 + MASTER_ACTIVATION sequence.
+     *
+     * The partial LUT is what makes the waveform "partial". DUC2=0xC4 just
+     * means "enable clock, enable analog, run a display cycle using the
+     * loaded LUT" — exactly what a full refresh does, but with a shorter
+     * waveform once lut_partial is loaded.
+     *
+     * The controller treats the previously displayed frame as the
+     * differential baseline. epd_update() mirrors the full framebuffer into
+     * RED RAM (0x26) at the end of every full refresh, so the first partial
+     * after a full refresh starts with a valid baseline; the controller
+     * keeps that baseline current for subsequent partials because nothing
+     * we do here overwrites it.
+     *
+     * Two earlier attempts that did NOT work — kept here as guard rails so
+     * future bring-up doesn't go down the same paths:
+     *
+     *   - Mirroring the *new* pixels into 0x26 immediately before activation
+     *     made the differential LUT see new==old in the window, so it
+     *     decided no pixel needed to flip and nothing visibly changed.
+     *   - Setting DUC1=0x00 0x80 ("RED-RAM-bypass") plus DUC2=0x0C to
+     *     suppress a suspected full-panel cycle: this controller does not
+     *     run a full waveform just because DUC2=0xC4 is used — the LUT is
+     *     what decides — and DUC2=0x0C effectively skipped the activation
+     *     because it doesn't enable clock/analog. Neither hack is needed
+     *     once 0x26 is left alone.
      */
-    ESP_RETURN_ON_ERROR(epd_command(DISPLAY_UPDATE_CONTROL_1), TAG, "duc1 partial");
-    ESP_RETURN_ON_ERROR(epd_data(0x00), TAG, "duc1 partial b1");
-    ESP_RETURN_ON_ERROR(epd_data(0x80), TAG, "duc1 partial b2");
     ESP_RETURN_ON_ERROR(epd_use_partial_lut(true), TAG, "partial lut");
     ESP_RETURN_ON_ERROR(epd_set_memory_area_phys(byte_start * 8,
                                                  phys_y_min,
                                                  byte_end * 8 + 7,
                                                  phys_y_max),
                         TAG, "set partial memory area");
-    /* Write new pixel data to the new-frame register (0x24). */
     ESP_RETURN_ON_ERROR(epd_set_memory_pointer_phys(byte_start * 8,
                                                     phys_y_min),
                         TAG, "set partial memory pointer");
@@ -391,32 +430,9 @@ static esp_err_t epd_update_logical_rect(int x, int y, int w, int h)
         ESP_RETURN_ON_ERROR(epd_data_buffer(src, (size_t)bytes_per_row),
                             TAG, "write partial framebuffer");
     }
-    /*
-     * Mirror the same data into the old-frame register (0x26).  This
-     * becomes the "old" baseline for the NEXT partial refresh, so the
-     * controller can correctly identify only the pixels that change.
-     * Without this, 0x26 lags behind by one full update and the
-     * controller drives every pixel in the window on every refresh.
-     */
-    ESP_RETURN_ON_ERROR(epd_set_memory_pointer_phys(byte_start * 8,
-                                                    phys_y_min),
-                        TAG, "set partial old-ram pointer");
-    ESP_RETURN_ON_ERROR(epd_command(WRITE_RAM_RED), TAG, "write partial old ram");
-    for (int row = phys_y_min; row <= phys_y_max; row++) {
-        const uint8_t *src =
-            &framebuffer[(size_t)row * EPD_BYTES_PER_ROW + byte_start];
-        ESP_RETURN_ON_ERROR(epd_data_buffer(src, (size_t)bytes_per_row),
-                            TAG, "write partial old framebuffer");
-    }
     ESP_RETURN_ON_ERROR(epd_command(DISPLAY_UPDATE_CONTROL_2),
                         TAG, "partial update control");
-    /*
-     * 0x0c = Display with Mode 1 (use LUT register) without re-enabling
-     * clock/charge-pump.  0xc4 (the full-refresh byte) re-enables them
-     * and triggers the full waveform sequence even with a partial LUT
-     * loaded — which is why the whole screen was flashing.
-     */
-    ESP_RETURN_ON_ERROR(epd_data(0x0c), TAG, "partial update control value");
+    ESP_RETURN_ON_ERROR(epd_data(0xc4), TAG, "partial update control value");
     ESP_RETURN_ON_ERROR(epd_command(MASTER_ACTIVATION),
                         TAG, "partial master activation");
     ESP_RETURN_ON_ERROR(epd_command(TERMINATE_FRAME_READ_WRITE),
@@ -617,19 +633,20 @@ static void fb_battery_icon(int x, int y, int percent)
 
 esp_err_t tr19_epaper_init(void)
 {
-    if (s_epaper_initialized) {
-        return ESP_OK;
+    if (!s_epaper_bus_ready) {
+        ESP_LOGI(TAG, "initializing TR19-compatible ePaper on "
+                 "SCK=%d MOSI=%d CS=%d DC=%d RST=%d BUSY=%d",
+                 EPD_PIN_SCK, EPD_PIN_MOSI, EPD_PIN_CS,
+                 EPD_PIN_DC, EPD_PIN_RST, EPD_PIN_BUSY);
+        ESP_RETURN_ON_ERROR(epd_init_bus(), TAG, "init display bus");
+        s_epaper_bus_ready = true;
     }
 
-    ESP_LOGI(TAG, "initializing TR19-compatible ePaper on "
-             "SCK=%d MOSI=%d CS=%d DC=%d RST=%d BUSY=%d",
-             EPD_PIN_SCK, EPD_PIN_MOSI, EPD_PIN_CS,
-             EPD_PIN_DC, EPD_PIN_RST, EPD_PIN_BUSY);
-
-    ESP_RETURN_ON_ERROR(epd_init_bus(),   TAG, "init display bus");
-    ESP_RETURN_ON_ERROR(epd_init_panel(), TAG, "init display panel");
-
-    s_epaper_initialized = true;
+    /* Panel may have been put to sleep after the last refresh — re-init now. */
+    if (!s_panel_armed) {
+        ESP_RETURN_ON_ERROR(epd_init_panel(), TAG, "init display panel");
+        s_panel_armed = true;
+    }
     return ESP_OK;
 }
 
@@ -718,6 +735,8 @@ esp_err_t tr19_epaper_show_sign(bool please_ring, const char *custom_text)
     fb_battery_icon(icon_x, 117, battery_percent);
 
     ESP_RETURN_ON_ERROR(epd_update(), TAG, "update display");
+    /* Drop the controller into deep sleep — saves ~2-5 mA between refreshes. */
+    (void)epd_deep_sleep();
     ESP_LOGI(TAG, "sign display updated (state=%s ip=%s battery=%s)",
              please_ring ? "please_ring" : "do_not_disturb", ip, battery_label);
     return ESP_OK;
@@ -734,7 +753,60 @@ esp_err_t tr19_epaper_show_hello(void)
     fb_text_centered("UPDATED", 100, 2);
 
     ESP_RETURN_ON_ERROR(epd_update(), TAG, "update display");
+    (void)epd_deep_sleep();
     ESP_LOGI(TAG, "hello display update complete");
+    return ESP_OK;
+}
+
+esp_err_t tr19_epaper_show_nightmode(void)
+{
+    ESP_RETURN_ON_ERROR(tr19_epaper_init(), TAG, "init");
+
+    s_recovery_layout_valid = false;
+    fb_clear(true);
+
+    /*
+     * Two-line headline, vertically centred in the 114 px body above the footer.
+     *
+     * KLINGEL      scale 6 → 7 × 6 × 6 = 252 px wide, 7 × 6 = 42 px tall
+     * DEAKTIVIERT  scale 4 → 11 × 6 × 4 = 264 px wide, 7 × 4 = 28 px tall
+     * Gap 8 px between lines.
+     * Block height 78 px → y_start = (114 − 78) / 2 = 18.
+     */
+    fb_text_centered("KLINGEL",      18, 6);
+    fb_text_centered("DEAKTIVIERT",  68, 4);
+
+    fb_hline(114);
+    fb_hline(115);
+
+    char ip[16];
+    wifi_get_ip(ip, sizeof(ip));
+    char ip_label[24];
+    snprintf(ip_label, sizeof(ip_label), "IP %s", ip);
+    fb_text(ip_label, 6, 119, 1);
+
+    int battery_percent = badge_power_get_battery_percent();
+    char battery_label[16];
+    if (battery_percent >= 0) {
+        snprintf(battery_label, sizeof(battery_label), "%d%%", battery_percent);
+    } else {
+        snprintf(battery_label, sizeof(battery_label), "--%%");
+    }
+    const int icon_w = 25;
+    const int margin = 2;
+    const int gap = 4;
+    int icon_x = SCREEN_WIDTH - icon_w - margin;
+    int label_w = fb_text_width(battery_label, 1);
+    int label_x = icon_x - gap - label_w;
+    if (label_x < 0) {
+        label_x = 0;
+    }
+    fb_text(battery_label, label_x, 119, 1);
+    fb_battery_icon(icon_x, 117, battery_percent);
+
+    ESP_RETURN_ON_ERROR(epd_update(), TAG, "update display");
+    (void)epd_deep_sleep();
+    ESP_LOGI(TAG, "night mode display updated (battery=%s)", battery_label);
     return ESP_OK;
 }
 

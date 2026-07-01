@@ -31,6 +31,8 @@ else()
         "badge_server.c"
         "badge_button.c"
         "badge_touch.c"
+        "badge_nav.c"
+        "badge_nightmode.c"
         "log_ship.c"
     )
 endif()
@@ -58,6 +60,7 @@ idf_component_register(
         spi_flash
         bootloader_support
         json
+        lwip
 )
 
 if(NOT DEFINED BADGE_BUILD_TIMESTAMP)
@@ -84,6 +87,30 @@ endif()
 
 if(RECOVERY_FIRMWARE)
     target_compile_definitions(${COMPONENT_LIB} PUBLIC RECOVERY_FIRMWARE=1)
+endif()
+
+if(DEFINED BADGE_NIGHTMODE_TEST_SLEEP_S)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        BADGE_NIGHTMODE_TEST_SLEEP_S=${BADGE_NIGHTMODE_TEST_SLEEP_S})
+endif()
+
+if(BADGE_NIGHTMODE_TEST_TRIGGER_NOW)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        BADGE_NIGHTMODE_TEST_TRIGGER_NOW=1)
+endif()
+
+# Hour overrides exercise the real nightmode_task wait loop (TEST_TRIGGER_NOW
+# only tests the init-path shortcut). Example:
+#   tools/build-firmware.sh -DBADGE_NIGHTMODE_TEST_NIGHT_START_HOUR=15 \
+#                           -DBADGE_NIGHTMODE_TEST_SLEEP_S=60
+if(DEFINED BADGE_NIGHTMODE_TEST_NIGHT_START_HOUR)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        NIGHT_START_HOUR=${BADGE_NIGHTMODE_TEST_NIGHT_START_HOUR})
+endif()
+
+if(DEFINED BADGE_NIGHTMODE_TEST_WAKE_HOUR)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        WAKE_HOUR=${BADGE_NIGHTMODE_TEST_WAKE_HOUR})
 endif()
 
 # esp_app_desc.c embeds __DATE__/__TIME__. Make it rebuild even when only

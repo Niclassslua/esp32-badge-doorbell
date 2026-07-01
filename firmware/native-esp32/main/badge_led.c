@@ -199,6 +199,11 @@ void badge_led_set_custom_color(bool enabled, badge_led_color_t color)
     badge_led_set_sign_state(s_please_ring);
 }
 
+void badge_led_off(void)
+{
+    badge_led_write_color(0, 0, 0);
+}
+
 void badge_led_pulse_button_feedback(bool please_ring)
 {
     if (please_ring) {

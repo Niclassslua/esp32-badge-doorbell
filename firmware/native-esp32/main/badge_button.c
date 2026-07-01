@@ -19,6 +19,7 @@
 #include "badge_power.h"
 #include "badge_state.h"
 #include "badge_touch.h"
+#include "wifi_connect.h"
 
 static const char *TAG = "badge.button";
 
@@ -198,10 +199,21 @@ static void task_ring(void *arg)
     const char *source = (const char *)arg;
 
     ESP_LOGI(TAG, "ring (%s): accepted", source);
+
+    /* Kick the radio off first (non-blocking) so association + IP acquisition
+     * overlap the ~870 ms of LED + haptic feedback below, instead of starting
+     * only after it. Bring WiFi up only for the lamp flash, then release it —
+     * keeps the radio off ~24/7. */
+    wifi_begin();
     badge_led_pulse_button_feedback(true);
     badge_power_haptic_pulse();
 
-    flash_home_assistant_light();
+    if (wifi_wait_up(8000) == ESP_OK) {
+        flash_home_assistant_light();
+        wifi_release();
+    } else {
+        ESP_LOGW(TAG, "ring (%s): WiFi unavailable, skipped lamp flash", source);
+    }
 
     finish_ring_task();
     vTaskDelete(NULL);

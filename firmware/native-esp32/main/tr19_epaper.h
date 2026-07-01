@@ -35,3 +35,12 @@ esp_err_t tr19_epaper_show_hello(void);
  * calls it from a background task so display timeouts never block recovery.
  */
 esp_err_t tr19_epaper_show_recovery(const char *line1, const char *line2);
+
+/**
+ * Render the night-mode screen: "KLINGEL DEAKTIVIERT" with battery footer.
+ *
+ * Called synchronously by badge_state_enter_nightmode() immediately before
+ * deep sleep. The display task is not involved — this runs in the caller's
+ * task context and returns only after the e-paper refresh is complete.
+ */
+esp_err_t tr19_epaper_show_nightmode(void);
