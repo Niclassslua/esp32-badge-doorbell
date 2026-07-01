@@ -379,10 +379,9 @@ static esp_err_t epd_update_logical_rect(int x, int y, int w, int h)
     int bytes_per_row = byte_end - byte_start + 1;
 
     /*
-     * Partial refresh flow, taken from the TR19 reference driver
-     * (vendor/tr19-moddisplay/moddisplay_epd2in9.c, set_frame_memory_partial
-     * + flush), which itself mirrors the Waveshare 2.9" V1 demo for this
-     * SSD1675-class controller:
+     * Partial refresh flow, adapted from the TR19 MicroPython display
+     * driver's set_frame_memory_partial + flush, which itself mirrors the
+     * Waveshare 2.9" V1 demo for this SSD1675-class controller:
      *
      *   1. Make sure lut_partial is the active waveform.
      *   2. Restrict the RAM window to the rectangle.

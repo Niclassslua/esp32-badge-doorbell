@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Custom ESP-IDF firmware for the TROOPERS 22 (TR22) badge — ESP32-WROVER-B, 16 MB flash, 2.9" e-paper display (TR19-compatible), WS2812 LEDs, IQS550 capacitive touch keyboard, DRV2605L haptic driver, and a PCA9555 nav-button expander all sharing one I²C bus. The badge acts as a smart door-sign / doorbell with optional Home Assistant integration.
 
-Active project lives at `firmware/native-esp32/`. The repo also contains a TR19 e-paper reference (`vendor/tr19-moddisplay/`), helper scripts (`tools/`), hardware notes (`docs/`), and an in-tree ESP-IDF checkout (`.deps/esp-idf/`).
+Active project lives at `firmware/native-esp32/`. The repo also contains helper scripts (`tools/`), hardware notes (`docs/`), and an in-tree ESP-IDF checkout (`.deps/esp-idf/`).
 
 ## Build & flash
 

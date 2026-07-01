@@ -6,8 +6,7 @@ This repo starts from what we know:
 
 - The badge is a classic ESP32 with 16 MB flash.
 - Secure boot and flash encryption were not enabled on the tested device.
-- The TR22 display is believed to be the same as the TR19 display.
-- A vendored copy of the relevant TR19 display driver lives in `vendor/tr19-moddisplay/`.
+- The TR22 display is believed to be the same as the TR19 display; `firmware/native-esp32/main/tr19_epaper.c` is our own driver written against that assumption.
 
 If you have a backup of the original stock firmware, `tools/backup-original.sh`
 and `tools/restore-original.sh` can create/restore it; see
@@ -17,7 +16,6 @@ and `tools/restore-original.sh` can create/restore it; see
 
 - `docs/`: hardware notes, recovery instructions, and roadmap.
 - `firmware/`: our firmware experiments and eventual build targets.
-- `vendor/`: copied third-party/upstream code used as a reference or base.
 - `tools/`: local helper scripts.
 
 ## Current Strategy
