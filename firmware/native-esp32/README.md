@@ -1,16 +1,12 @@
 # Native ESP32 Firmware
 
-Minimal ESP-IDF bring-up firmware for the TR22 badge.
+ESP-IDF firmware for the badge doorbell/door-sign. See the repo-root
+`README.md` for a feature overview; this doc covers configure/build/flash/
+OTA/serial-log workflow in detail.
 
-Current behavior:
-
-- Logs chip and flash information over UART.
-- Toggles GPIO2 once per second as a first LED probe.
-- Attempts a TR19-compatible 2.9-inch ePaper update with `HELLO TR22 CUSTOM FW`.
-
-GPIO2 is only a placeholder until the real TR22 LED pins are confirmed.
-The display pins are copied from TR19: SCK 18, MOSI 23, CS 25, DC 27, RST 0, BUSY 13.
-Display operations have timeouts so the firmware should continue blinking/logging if the panel is not responding.
+The e-paper display pins are copied from TR19: SCK 18, MOSI 23, CS 25, DC 27,
+RST 0, BUSY 13. Display operations have timeouts so the firmware keeps
+running even if the panel doesn't respond.
 
 ## Configure
 
