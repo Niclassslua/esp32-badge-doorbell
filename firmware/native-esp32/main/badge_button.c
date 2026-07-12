@@ -129,7 +129,11 @@ static void flash_home_assistant_light(void)
         post_json("home assistant light off",
                   BADGE_HOME_ASSISTANT_LIGHT_TURN_OFF_URL,
                   auth_header, turn_off_body);
-        vTaskDelay(pdMS_TO_TICKS(BADGE_HOME_ASSISTANT_FLASH_OFF_MS));
+        /* No delay after the final turn-off: the caller releases WiFi next,
+         * and idling the radio for another off-period buys nothing. */
+        if (i + 1 < BADGE_HOME_ASSISTANT_FLASH_COUNT) {
+            vTaskDelay(pdMS_TO_TICKS(BADGE_HOME_ASSISTANT_FLASH_OFF_MS));
+        }
     }
 }
 

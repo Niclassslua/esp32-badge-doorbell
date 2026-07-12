@@ -85,6 +85,14 @@ if(GPIO_DEBUG_MODE)
     target_compile_definitions(${COMPONENT_LIB} PUBLIC GPIO_DEBUG_MODE=1)
 endif()
 
+# Restrict GPIO debug to the input-only pads (GPIO34-39): skips the pull-up/
+# pull-down scan entirely (it toggles pulls on PSRAM CS/CLK and strap pins)
+# and watches only pins that have no internal pulls and cannot be driven.
+# Electrically passive — safe to run on a badge you care about.
+if(GPIO_DEBUG_INPUT_ONLY)
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC GPIO_DEBUG_INPUT_ONLY=1)
+endif()
+
 if(RECOVERY_FIRMWARE)
     target_compile_definitions(${COMPONENT_LIB} PUBLIC RECOVERY_FIRMWARE=1)
 endif()

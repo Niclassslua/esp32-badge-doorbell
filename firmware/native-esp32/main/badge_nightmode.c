@@ -58,8 +58,13 @@ static const char *TAG = "badge.nightmode";
 /* Maximum time to wait for SNTP sync (ms). */
 #define SNTP_TIMEOUT_MS    10000
 
-/* How long to wait between SNTP retry attempts when time is not yet known. */
-#define SNTP_RETRY_INTERVAL_MS  60000
+/* How long to wait between SNTP retry attempts when time is not yet known.
+ * Doubles after every failure up to the cap: each failed attempt is a full
+ * WiFi bring-up with a 15 s timeout (~100+ mA radio), so retrying every
+ * minute forever would murder the battery whenever the home AP is out of
+ * reach. */
+#define SNTP_RETRY_INTERVAL_MS      60000
+#define SNTP_RETRY_INTERVAL_MAX_MS  (30u * 60u * 1000u)
 
 static bool s_time_synced = false;
 
@@ -275,10 +280,18 @@ static void nightmode_task(void *arg)
 {
     (void)arg;
 
-    /* Retry SNTP until the clock is known. */
+    /* Retry SNTP until the clock is known, backing off exponentially. */
+    uint32_t retry_ms = SNTP_RETRY_INTERVAL_MS;
     while (!s_time_synced) {
-        vTaskDelay(pdMS_TO_TICKS(SNTP_RETRY_INTERVAL_MS));
+        vTaskDelay(pdMS_TO_TICKS(retry_ms));
         s_time_synced = sntp_sync();
+        if (!s_time_synced) {
+            retry_ms = retry_ms * 2 > SNTP_RETRY_INTERVAL_MAX_MS
+                           ? SNTP_RETRY_INTERVAL_MAX_MS
+                           : retry_ms * 2;
+            ESP_LOGW(TAG, "SNTP still failing — next retry in %u s",
+                     (unsigned)(retry_ms / 1000));
+        }
     }
 
     /* Log time-to-nightmode for visibility. */

@@ -11,6 +11,8 @@
 
 #include "gpio_debug.h"
 
+#include "badge_i2c.h"
+
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -18,6 +20,7 @@
 #include <string.h>
 
 #include "driver/gpio.h"
+#include "driver/i2c_master.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -42,6 +45,37 @@ typedef struct {
  * Included strapping pins are read-only here.  Do not externally force them at
  * reset unless you mean to change boot mode.
  */
+#ifndef GPIO_DEBUG_INPUT_ONLY
+#define GPIO_DEBUG_INPUT_ONLY 0
+#endif
+
+#if GPIO_DEBUG_INPUT_ONLY
+/*
+ * Passive probe subset for hunting interrupt lines (IQS550 RDY, PCA9555
+ * INT). GPIO34-39 are input-only pads; the rest are the spare GPIOs not
+ * claimed by flash, PSRAM (16/17 excluded!), UART, I2C, LED, or e-paper.
+ * In this mode ALL pull resistors stay disabled (see
+ * watch_pullup_for_probe), so every pin is watched as a bare input buffer
+ * — electrically passive even on strap pins.
+ */
+static const gpio_probe_t SAFE_GPIOS[] = {
+    { GPIO_NUM_2,  "spare strap",          false, true  },
+    { GPIO_NUM_12, "spare strap adc2",     false, true  },
+    { GPIO_NUM_14, "spare jtag adc2",      false, false },
+    { GPIO_NUM_15, "spare strap jtag",     false, true  },
+    { GPIO_NUM_19, "spare",                false, false },
+    { GPIO_NUM_21, "spare (tr19 sda?)",    false, false },
+    { GPIO_NUM_26, "spare adc2 dac2",      false, false },
+    { GPIO_NUM_32, "spare adc1",           false, false },
+    { GPIO_NUM_33, "spare adc1",           false, false },
+    { GPIO_NUM_34, "adc1 input-only",      true,  false },
+    { GPIO_NUM_35, "adc1 input-only",      true,  false },
+    { GPIO_NUM_36, "adc1 input-only",      true,  false },
+    { GPIO_NUM_37, "adc1 input-only",      true,  false },
+    { GPIO_NUM_38, "adc1 input-only",      true,  false },
+    { GPIO_NUM_39, "adc1 input-only",      true,  false },
+};
+#else
 static const gpio_probe_t SAFE_GPIOS[] = {
     { GPIO_NUM_0,  "strap boot / epd rst", false, true  },
     { GPIO_NUM_2,  "strap",                false, true  },
@@ -70,6 +104,7 @@ static const gpio_probe_t SAFE_GPIOS[] = {
     { GPIO_NUM_38, "adc1 input-only",      true,  false },
     { GPIO_NUM_39, "adc1 input-only",      true,  false },
 };
+#endif /* GPIO_DEBUG_INPUT_ONLY */
 
 #define N_SAFE_GPIOS (sizeof(SAFE_GPIOS) / sizeof(SAFE_GPIOS[0]))
 
@@ -148,10 +183,16 @@ static void configure_input(gpio_num_t pin, gpio_pullup_t pull_up,
 
 static gpio_pullup_t watch_pullup_for_probe(const gpio_probe_t *probe)
 {
+#if GPIO_DEBUG_INPUT_ONLY
+    /* Passive-probe mode: never engage pull resistors on any pin. */
+    (void)probe;
+    return GPIO_PULLUP_DISABLE;
+#else
     if (!gpio_supports_internal_pull(probe->num) || probe->strapping) {
         return GPIO_PULLUP_DISABLE;
     }
     return GPIO_PULLUP_ENABLE;
+#endif
 }
 
 static void configure_watch_pin(const gpio_probe_t *probe)
@@ -295,12 +336,15 @@ void gpio_debug_scan(void)
         int pu = flt;
         int pd = flt;
 
+#if !GPIO_DEBUG_INPUT_ONLY
+        /* Passive-probe mode skips the pull tests — floating read only. */
         if (gpio_supports_internal_pull(pin)) {
             pu = read_with_pull(pin, GPIO_PULLUP_ENABLE,
                                 GPIO_PULLDOWN_DISABLE);
             pd = read_with_pull(pin, GPIO_PULLUP_DISABLE,
                                 GPIO_PULLDOWN_ENABLE);
         }
+#endif
 
         s_last_levels[i] = flt;
 
@@ -446,8 +490,75 @@ static void sampler_task(void *arg)
     }
 }
 
+#if GPIO_DEBUG_INPUT_ONLY
+/*
+ * PCA9555 expander watcher: the nav buttons use only port 0, so the IQS550
+ * RDY line may be routed to one of the 8 unused port-1 pins. Poll both
+ * input ports fast and log every change. Requires badge_i2c_init() first.
+ */
+#define EXPANDER_ADDR        0x20
+#define EXPANDER_POLL_MS     20
+#define EXPANDER_I2C_TIMEOUT 20
+
+static void expander_watch_task(void *arg)
+{
+    i2c_master_dev_handle_t dev = (i2c_master_dev_handle_t)arg;
+    uint8_t last[2] = { 0xff, 0xff };
+    bool have_last = false;
+
+    while (true) {
+        uint8_t reg = 0x00; /* input port 0; reads auto-increment to port 1 */
+        uint8_t ports[2] = { 0 };
+        esp_err_t err = i2c_master_transmit_receive(dev, &reg, 1,
+                                                    ports, sizeof(ports),
+                                                    EXPANDER_I2C_TIMEOUT);
+        if (err == ESP_OK) {
+            if (!have_last) {
+                have_last = true;
+                ESP_LOGI(TAG, "expander_watch addr=0x%02x port0=0x%02x port1=0x%02x (initial)",
+                         EXPANDER_ADDR, ports[0], ports[1]);
+            } else if (ports[0] != last[0] || ports[1] != last[1]) {
+                uint32_t now_ms =
+                    (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+                ESP_LOGI(TAG, "expander_change ms=%" PRIu32
+                              " port0=0x%02x->0x%02x port1=0x%02x->0x%02x",
+                         now_ms, last[0], ports[0], last[1], ports[1]);
+            }
+            last[0] = ports[0];
+            last[1] = ports[1];
+        }
+        vTaskDelay(pdMS_TO_TICKS(EXPANDER_POLL_MS));
+    }
+}
+
+static void expander_watch_start(void)
+{
+    i2c_master_bus_handle_t bus = badge_i2c_bus();
+    if (!bus) {
+        ESP_LOGW(TAG, "expander_watch skipped: I2C bus not initialised");
+        return;
+    }
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address  = EXPANDER_ADDR,
+        .scl_speed_hz    = 400000,
+    };
+    i2c_master_dev_handle_t dev = NULL;
+    esp_err_t err = i2c_master_bus_add_device(bus, &dev_cfg, &dev);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "expander_watch attach 0x%02x failed: %s",
+                 EXPANDER_ADDR, esp_err_to_name(err));
+        return;
+    }
+    xTaskCreate(expander_watch_task, "exp_watch", 3072, dev, 5, NULL);
+}
+#endif /* GPIO_DEBUG_INPUT_ONLY */
+
 void gpio_debug_watch(void)
 {
+#if GPIO_DEBUG_INPUT_ONLY
+    expander_watch_start();
+#endif
     s_event_queue = xQueueCreate(WATCH_QUEUE_LEN, sizeof(gpio_event_t));
     if (!s_event_queue) {
         ESP_LOGE(TAG, "event_queue_create failed");

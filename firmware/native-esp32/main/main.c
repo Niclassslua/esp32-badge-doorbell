@@ -170,7 +170,14 @@ void app_main(void)
     log_ship_init();
 #endif
 
+#if GPIO_DEBUG_MODE
+    /* Keep DFS + light sleep OFF in the pin-probe build: light sleep drops
+     * ordinary GPIO edge interrupts (34-39 would need dedicated wakeup
+     * config) and the APB downclock garbles the UART console mid-line. */
+    ESP_LOGW(TAG, "GPIO debug build: power management disabled");
+#else
     configure_power_saving();
+#endif
 
     /*
      * Reaching app_main means the bootloader handed us control. Mark the
@@ -187,6 +194,9 @@ void app_main(void)
     log_chip_info();
 
 #if GPIO_DEBUG_MODE
+    /* I2C up first so the passive-probe mode can also watch the PCA9555's
+     * unused port-1 pins for the IQS550 RDY line. */
+    (void)badge_i2c_init();
     gpio_debug_scan();   /* print pull-up/pull-down probe table */
     gpio_debug_watch();  /* block forever, logging every edge   */
     /* unreachable */
@@ -261,7 +271,8 @@ void app_main(void)
     /*    • OTA flow      starts when START is held for 3 s               */
     /* ------------------------------------------------------------------ */
     ESP_LOGI(TAG, "boot complete — door sign active (WiFi on-demand)");
+    /* Nothing left to do — park the main task without periodic wakeups. */
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(portMAX_DELAY);
     }
 }
